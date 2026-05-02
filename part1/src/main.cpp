@@ -21,6 +21,32 @@ unsigned long lastMqttReconnectAttempt = 0;
 // ===== Connection State Tracking =====
 bool wasMqttConnected = false;
 bool wasWifiConnected = false;
+// Updated by the WiFi event callback — reflects the driver's view of the
+// association, which flips faster than polling WiFi.status().
+volatile bool wifiAssociated = false;
+
+// ===== WiFi Event Handler =====
+// Fires from the WiFi driver task the moment an association event happens.
+// Far more responsive than polling WiFi.status(), especially when the AP
+// disappears silently (e.g. hotspot turned off, router unplugged) and no
+// DEAUTH frame is sent.
+void onWifiEvent(WiFiEvent_t event) {
+    switch (event) {
+        case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+            wifiAssociated = true;
+            Serial.printf("\n[WiFi Event] Got IP: %s\n",
+                          WiFi.localIP().toString().c_str());
+            break;
+        case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+            if (wifiAssociated) {
+                Serial.println("\n[WiFi Event] *** STA DISCONNECTED ***");
+            }
+            wifiAssociated = false;
+            break;
+        default:
+            break;
+    }
+}
 
 // ===== Forward Declarations =====
 void setupWiFi();
@@ -38,7 +64,10 @@ void setup() {
     delay(100);
     Serial.println("\n\n=== ESP32 IoT Sensor Device ===");
     Serial.println("Starting initialization...\n");
-    
+
+    // Register WiFi event handler BEFORE WiFi.begin() so we catch GOT_IP
+    WiFi.onEvent(onWifiEvent);
+
     // Setup WiFi
     setupWiFi();
     
@@ -63,9 +92,14 @@ void setup() {
  */
 void loop() {
     // ----- WiFi state transitions -----
-    bool wifiUp = (WiFi.status() == WL_CONNECTED);
+    // Trust the event-driven flag over WiFi.status() — the latter can lie
+    // for several seconds when the AP vanishes without sending a DEAUTH.
+    bool wifiUp = wifiAssociated && (WiFi.status() == WL_CONNECTED);
     if (!wifiUp && wasWifiConnected) {
-        Serial.println("\n[WiFi] *** CONNECTION LOST ***");
+        Serial.println("\n[WiFi] *** CONNECTION LOST *** — readings will be buffered");
+        // Tear down MQTT immediately so the next publish goes straight to
+        // the buffer instead of writing to a dead lwIP send queue.
+        if (mqttClient.connected()) mqttClient.disconnect();
     }
     wasWifiConnected = wifiUp;
 
@@ -193,7 +227,8 @@ void publishSensorData() {
     // Skip publish entirely if we know the link is down — publish() would
     // otherwise return true while writing to a dead socket buffer, falsely
     // reporting success. Three-layer check: WiFi link, TCP socket, MQTT state.
-    if (WiFi.status() != WL_CONNECTED || !espClient.connected() || !mqttClient.connected()) {
+    if (!wifiAssociated || WiFi.status() != WL_CONNECTED
+        || !espClient.connected() || !mqttClient.connected()) {
         Serial.println("[Publish] OFFLINE - buffering reading for later replay");
         messageBuffer.push(jsonBuffer, capturedAt);
         return;
@@ -224,8 +259,10 @@ void flushBuffer() {
     while (messageBuffer.pop(msg)) {
         if (mqttClient.publish(MQTT_TOPIC_SENSORS, msg.payload)) {
             flushed++;
-            Serial.printf("[Buffer] Replayed reading t=%lums (%d left)\n",
+            Serial.printf("[Backup] SUCCESS - replayed reading t=%lums (%d left)\n",
                           msg.capturedAt, messageBuffer.count());
+            Serial.printf("  Topic: %s\n", MQTT_TOPIC_SENSORS);
+            Serial.printf("  Payload: %s\n", msg.payload);
         } else {
             // Broker refused mid-flush — push back and stop
             messageBuffer.push(msg.payload, msg.capturedAt);
