@@ -46,8 +46,13 @@ bool DHT22Sensor::read(JsonObject& jsonDoc) {
     lastTemperature = temperature;
     lastHumidity = humidity;
     
-    jsonDoc["temperature"] = temperature;
-    jsonDoc["humidity"] = humidity;
+    JsonObject tempObj = jsonDoc["temperature"].to<JsonObject>();
+    tempObj["value"] = temperature;
+    tempObj["unit"] = "C";
+
+    JsonObject humObj = jsonDoc["humidity"].to<JsonObject>();
+    humObj["value"] = humidity;
+    humObj["unit"] = "%";
     
     return true;
 }

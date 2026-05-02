@@ -33,8 +33,13 @@ bool FlameSensor::read(JsonObject& jsonDoc) {
     lastDigital = digital;
     lastAnalog = analog;
     
-    jsonDoc["flame_digital"] = digital;
-    jsonDoc["flame_analog"] = analog;
+    JsonObject digitalObj = jsonDoc["flame_digital"].to<JsonObject>();
+    digitalObj["value"] = digital;
+    digitalObj["unit"] = "bool";
+
+    JsonObject analogObj = jsonDoc["flame_analog"].to<JsonObject>();
+    analogObj["value"] = analog;
+    analogObj["unit"] = "raw";
     
     return true;
 }
