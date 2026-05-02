@@ -4,6 +4,7 @@
 #include <ArduinoJson.h>
 #include "config.h"
 #include "sensor_manager.h"
+#include "message_buffer.h"
 #include "sensors/dht22_sensor.h"
 #include "sensors/flame_sensor.h"
 
@@ -11,16 +12,22 @@
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 SensorManager sensorManager;
+MessageBuffer messageBuffer;
 
 // ===== Timing Variables =====
 unsigned long lastSensorRead = 0;
 unsigned long lastMqttReconnectAttempt = 0;
+
+// ===== Connection State Tracking =====
+bool wasMqttConnected = false;
+bool wasWifiConnected = false;
 
 // ===== Forward Declarations =====
 void setupWiFi();
 void setupMQTT();
 void reconnectMQTT();
 void publishSensorData();
+void flushBuffer();
 
 /**
  * @brief Setup function - runs once at startup
@@ -55,27 +62,48 @@ void setup() {
  * @brief Main loop - runs continuously
  */
 void loop() {
-    // Ensure WiFi is connected
-    if (WiFi.status() != WL_CONNECTED) {
+    // ----- WiFi state transitions -----
+    bool wifiUp = (WiFi.status() == WL_CONNECTED);
+    if (!wifiUp && wasWifiConnected) {
+        Serial.println("\n[WiFi] *** CONNECTION LOST ***");
+    }
+    wasWifiConnected = wifiUp;
+
+    if (!wifiUp) {
         Serial.println("[Main] WiFi disconnected, reconnecting...");
         setupWiFi();
     }
-    
-    // Ensure MQTT is connected
-    if (!mqttClient.connected()) {
+
+    // ----- MQTT state transitions -----
+    // Check the underlying TCP socket directly — lwIP can detect a CLOSE_WAIT
+    // / RST faster than PubSubClient's keepalive logic. If the socket is dead
+    // but PubSubClient still thinks it's connected, force it to reconcile.
+    if (mqttClient.connected() && !espClient.connected()) {
+        Serial.println("\n[MQTT] TCP socket dead — forcing PubSubClient disconnect");
+        mqttClient.disconnect();
+    }
+
+    bool mqttUp = mqttClient.connected();
+    if (!mqttUp && wasMqttConnected) {
+        Serial.printf("\n[MQTT] *** CONNECTION LOST *** (rc=%d) — readings will be buffered\n",
+                      mqttClient.state());
+    }
+    wasMqttConnected = mqttUp;
+
+    if (!mqttUp) {
         reconnectMQTT();
     }
-    
-    // Keep MQTT client alive
+
+    // Keep MQTT client alive (drives keepalive pings + detects drops)
     mqttClient.loop();
-    
+
     // Read and publish sensor data at regular interval
     unsigned long now = millis();
     if (now - lastSensorRead >= SENSOR_READ_INTERVAL) {
         lastSensorRead = now;
         publishSensorData();
     }
-    
+
     delay(100);  // Small delay to avoid watchdog timeout
 }
 
@@ -110,8 +138,12 @@ void setupWiFi() {
  */
 void setupMQTT() {
     mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
+    // Short keepalive so a dropped connection is detected within ~MQTT_KEEPALIVE
+    // seconds instead of the 15s default. Must be > publish interval / 1000.
+    mqttClient.setKeepAlive(MQTT_KEEPALIVE);
+    mqttClient.setSocketTimeout(MQTT_SOCKET_TIMEOUT);
     Serial.printf("[MQTT] Broker: %s:%d\n", MQTT_SERVER, MQTT_PORT);
-    Serial.printf("[MQTT] Client ID: %s\n", MQTT_CLIENT_ID);
+    Serial.printf("[MQTT] Client ID: %s, keepalive: %ds\n", MQTT_CLIENT_ID, MQTT_KEEPALIVE);
 }
 
 /**
@@ -132,7 +164,9 @@ void reconnectMQTT() {
         
         if (mqttClient.connect(MQTT_CLIENT_ID)) {
             Serial.println("CONNECTED");
-            Serial.printf("[MQTT] Topic: %s\n", MQTT_TOPIC_SENSORS);
+            Serial.printf("[MQTT] *** CONNECTION RESTORED *** Topic: %s\n", MQTT_TOPIC_SENSORS);
+            wasMqttConnected = true;
+            flushBuffer();
         } else {
             Serial.printf("FAILED (rc=%d)\n", mqttClient.state());
             Serial.println("[MQTT] Will retry in 5 seconds");
@@ -141,27 +175,67 @@ void reconnectMQTT() {
 }
 
 /**
- * @brief Read all sensors and publish data to MQTT
+ * @brief Read all sensors and publish data to MQTT.
+ * On publish failure the payload is pushed to the offline buffer so it
+ * can be replayed (in order, with original timestamps) once reconnected.
  */
 void publishSensorData() {
-    // Create JSON document
     JsonDocument jsonDoc;
-    
-    // Read all sensors simultaneously
+
     if (!sensorManager.readAll(jsonDoc)) {
         Serial.println("[Publish] Warning: Some sensor reads failed");
     }
-    
-    // Serialize JSON to string
-    char jsonBuffer[512];
+
+    char jsonBuffer[PAYLOAD_MAX_LEN];
+    unsigned long capturedAt = jsonDoc["timestamp"].as<unsigned long>();
     size_t jsonSize = serializeJson(jsonDoc, jsonBuffer);
-    
-    // Publish to MQTT
+
+    // Skip publish entirely if we know the link is down — publish() would
+    // otherwise return true while writing to a dead socket buffer, falsely
+    // reporting success. Three-layer check: WiFi link, TCP socket, MQTT state.
+    if (WiFi.status() != WL_CONNECTED || !espClient.connected() || !mqttClient.connected()) {
+        Serial.println("[Publish] OFFLINE - buffering reading for later replay");
+        messageBuffer.push(jsonBuffer, capturedAt);
+        return;
+    }
+
     if (mqttClient.publish(MQTT_TOPIC_SENSORS, jsonBuffer)) {
         Serial.printf("[Publish] SUCCESS - %zu bytes sent\n", jsonSize);
         Serial.printf("  Topic: %s\n", MQTT_TOPIC_SENSORS);
         Serial.printf("  Payload: %s\n", jsonBuffer);
     } else {
-        Serial.println("[Publish] FAILED - MQTT not connected or publish failed");
+        Serial.printf("[Publish] FAILED (rc=%d) - buffering reading for later replay\n",
+                      mqttClient.state());
+        messageBuffer.push(jsonBuffer, capturedAt);
     }
+}
+
+/**
+ * @brief Drain the offline buffer, replaying stored readings in FIFO order.
+ * Called immediately after a successful MQTT reconnection.
+ */
+void flushBuffer() {
+    if (messageBuffer.isEmpty()) return;
+
+    Serial.printf("[Buffer] Flushing %d buffered reading(s)...\n", messageBuffer.count());
+
+    BufferedMessage msg;
+    int flushed = 0;
+    while (messageBuffer.pop(msg)) {
+        if (mqttClient.publish(MQTT_TOPIC_SENSORS, msg.payload)) {
+            flushed++;
+            Serial.printf("[Buffer] Replayed reading t=%lums (%d left)\n",
+                          msg.capturedAt, messageBuffer.count());
+        } else {
+            // Broker refused mid-flush — push back and stop
+            messageBuffer.push(msg.payload, msg.capturedAt);
+            Serial.printf("[Buffer] Publish failed mid-flush, %d reading(s) re-queued\n",
+                          messageBuffer.count());
+            break;
+        }
+        mqttClient.loop();  // keep connection alive between publishes
+    }
+
+    Serial.printf("[Buffer] Flush complete — %d sent, %d remaining\n",
+                  flushed, messageBuffer.count());
 }

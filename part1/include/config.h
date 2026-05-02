@@ -23,6 +23,18 @@
 #define SENSOR_READ_INTERVAL 5000  // Read sensors every 5 seconds
 #define MQTT_RECONNECT_INTERVAL 5000
 
+// ===== MQTT Liveness =====
+// Aggressive keepalive so half-open sockets are caught fast. With publishes
+// every 5s and a TCP send buffer of several KB, a dead broker can otherwise
+// silently absorb 20+ "successful" writes before the lib notices.
+// Detection time = ~2 x MQTT_KEEPALIVE seconds (PINGREQ + PINGRESP timeout).
+#define MQTT_KEEPALIVE      4
+#define MQTT_SOCKET_TIMEOUT 2   // seconds before publish/connect calls give up
+
+// ===== Offline Buffer Configuration =====
+#define BUFFER_MAX_SIZE    20   // max readings kept while MQTT is down
+#define PAYLOAD_MAX_LEN   512   // must be >= serialized JSON size
+
 // ===== Data Validation Ranges =====
 #define TEMP_MIN -40.0f
 #define TEMP_MAX 80.0f
