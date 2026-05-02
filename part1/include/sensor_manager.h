@@ -17,7 +17,7 @@
 class SensorManager {
 private:
     std::vector<SensorBase*> sensors;
-    StaticJsonDocument<512> sensorData;
+    JsonDocument sensorData;
 
 public:
     SensorManager();

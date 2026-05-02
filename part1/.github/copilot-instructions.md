@@ -83,7 +83,7 @@ class NewSensor : public SensorBase {
 - **Naming**: camelCase for variables, PascalCase for classes
 - **Validation**: Always check for NaN (sensors) and range violations
 - **Error Handling**: Return false on errors, log via Serial
-- **Memory**: Use StaticJsonDocument (fixed size on stack), avoid dynamic allocation in loop
+- **Memory**: Use `JsonDocument` (ArduinoJson v7 — `StaticJsonDocument`/`DynamicJsonDocument` were removed). Avoid other dynamic allocation in `loop()`.
 
 ## Scoring Rubric Alignment
 

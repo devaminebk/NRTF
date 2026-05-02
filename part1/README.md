@@ -90,6 +90,10 @@ Published to topic `esp32/sensors`:
 - ESP32 board connected via USB (update `COM` port in `platformio.ini`)
 - Mosquitto MQTT broker running on local PC
 
+### Opening the Project
+
+This project is one of several `partN/` folders under the repo root. Open `NRTF.code-workspace` (at the repo root) via `File → Open Workspace from File...` so PlatformIO detects `part1/` correctly. Opening the `NRTF/` folder directly will break IntelliSense and lib resolution.
+
 ### Build
 
 ```bash

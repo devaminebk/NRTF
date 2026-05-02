@@ -145,7 +145,7 @@ void reconnectMQTT() {
  */
 void publishSensorData() {
     // Create JSON document
-    StaticJsonDocument<512> jsonDoc;
+    JsonDocument jsonDoc;
     
     // Read all sensors simultaneously
     if (!sensorManager.readAll(jsonDoc)) {

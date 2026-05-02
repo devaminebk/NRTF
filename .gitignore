@@ -1,0 +1,15 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Python venv (PlatformIO)
+.venv/
+
+# VSCode (auto-generated per machine; keep .code-workspace at repo root)
+.vscode/
+!.vscode/extensions.json
+
+# OS
+Thumbs.db
+.DS_Store
