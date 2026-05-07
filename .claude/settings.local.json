@@ -1,7 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\dell\\\\Desktop\\\\NRTF\" -Recurse | ForEach-Object { $_.FullName } | Sort-Object)"
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\dell\\\\Desktop\\\\NRTF\" -Recurse | ForEach-Object { $_.FullName } | Sort-Object)",
+      "Read(//c/Program Files \\(x86\\)/Microsoft/Edge/Application/**)",
+      "Read(//c/Program Files/Microsoft/Edge/Application/**)",
+      "Bash(\"/c/Program Files \\(x86\\)/Microsoft/Edge/Application/msedge.exe\" --headless --disable-gpu --no-pdf-header-footer --print-to-pdf=\"c:/Users/dell/Desktop/NRTF/part1/docs/part1_overview.pdf\" \"file:///c:/Users/dell/Desktop/NRTF/part1/docs/part1_overview.html\")",
+      "Bash(mkdir -p data/raw/images data/raw/pdfs)",
+      "Bash(mv \"data/raw/WhatsApp Image 2026-04-27 at 21.39.25 \\(57\\).jpeg\" data/raw/images/)",
+      "Bash(mv \"data/raw/data faxtuees.pdf\" data/raw/pdfs/)",
+      "Read(//c/c/Users/dell/Desktop/NRTF/part2/data/**)",
+      "Bash(python main.py)"
     ]
   }
 }

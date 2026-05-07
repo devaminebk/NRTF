@@ -6,7 +6,14 @@ Handles three document types found in the dataset:
   3. SONEDE_WATER     — "Facture de consommation eau" (water bill, ignored
                          for energy pipeline but still detected and logged)
 
-Pipeline per image:
+Backend selection (automatic):
+  1. Gemini Vision API  — used when GEMINI_API_KEY is set in the environment.
+                          Sends the raw image to Gemini and receives structured
+                          JSON directly; no regex fragility, no local binary.
+  2. Tesseract OCR      — fallback when the API key is absent or the API call
+                          fails. Requires the Tesseract binary to be installed.
+
+Pipeline per image (Tesseract path):
     load -> grayscale -> upscale 2x -> OCR (multi-PSM) -> classify -> regex extract
 
 Output: a long-format DataFrame with the same schema as extract_excel:
@@ -32,6 +39,38 @@ if sys.platform == "win32":
     tesseract_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
     if PathlibPath(tesseract_path).exists():
         pytesseract.pytesseract.tesseract_cmd = tesseract_path
+
+# ---------------------------------------------------------------------------
+# Gemini backend — lazy singleton
+# ---------------------------------------------------------------------------
+_gemini_client = None  # GeminiOCRClient instance, initialised on first use
+
+
+def _get_gemini_client():
+    """Return a cached GeminiOCRClient or None if unavailable."""
+    global _gemini_client
+    if _gemini_client is not None:
+        return _gemini_client
+
+    import os
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        return None
+
+    try:
+        from src.extraction.gemini_ocr import GeminiOCRClient, is_available
+        if not is_available():
+            logger.warning(
+                "[OCR] google-generativeai not installed; falling back to Tesseract. "
+                "Install with: pip install google-generativeai"
+            )
+            return None
+        _gemini_client = GeminiOCRClient(api_key=api_key)
+        logger.info("[OCR] Gemini Vision backend initialised.")
+        return _gemini_client
+    except Exception as exc:
+        logger.warning(f"[OCR] Could not initialise Gemini client: {exc}. Using Tesseract.")
+        return None
 
 # ---------------------------------------------------------------------------
 # OCR config
@@ -313,11 +352,21 @@ def _extract_sonede_water(text: str, source: str) -> list[dict]:
 def extract_image(filepath: Union[str, Path]) -> pd.DataFrame:
     """Extract energy data from a single scanned invoice/sheet image.
 
+    Tries Gemini Vision first (if available), falls back to Tesseract OCR.
     Returns a long-format DataFrame (possibly empty if nothing extracted).
     """
     filepath = Path(filepath)
     logger.info(f"OCR on image: {filepath.name}")
 
+    # Try Gemini Vision first
+    gemini_client = _get_gemini_client()
+    if gemini_client:
+        try:
+            return gemini_client.extract_to_dataframe(filepath)
+        except Exception as e:
+            logger.warning(f"  Gemini Vision failed: {e}. Falling back to Tesseract.")
+
+    # Fallback to Tesseract
     img = cv2.imread(str(filepath))
     if img is None:
         logger.error(f"  Could not read image: {filepath}")

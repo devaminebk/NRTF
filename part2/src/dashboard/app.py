@@ -200,6 +200,194 @@ def load_data() -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# File processing
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# File processing
+# ---------------------------------------------------------------------------
+def process_uploaded_files(excel_files, pdf_files, image_files):
+    """Process uploaded files and add them to the dataset."""
+    import tempfile
+    import shutil
+    import time
+    import os
+    from pathlib import Path
+
+    # Create progress bar
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    total_files = len(excel_files or []) + len(pdf_files or []) + len(image_files or [])
+    processed = 0
+
+    # Create persistent temp directory (don't use context manager to avoid premature cleanup)
+    temp_dir = tempfile.mkdtemp(prefix="retech_upload_")
+    temp_path = Path(temp_dir)
+
+    try:
+        # Save uploaded files to temp directory with proper file handling
+        all_files = []
+
+        if excel_files:
+            excel_dir = temp_path / "excel"
+            excel_dir.mkdir(exist_ok=True)
+            for file in excel_files:
+                file_path = excel_dir / file.name
+                try:
+                    with open(file_path, "wb") as f:
+                        f.write(file.getbuffer())
+                        f.flush()  # Ensure data is written to disk
+                        os.fsync(f.fileno())  # Force write to disk
+                    # Verify file was written correctly
+                    if file_path.stat().st_size > 0:
+                        all_files.append(("excel", file_path))
+                    else:
+                        st.error(f"❌ Failed to write {file.name}: file is empty")
+                except Exception as e:
+                    st.error(f"❌ Failed to save {file.name}: {str(e)}")
+
+        if pdf_files:
+            pdf_dir = temp_path / "pdfs"
+            pdf_dir.mkdir(exist_ok=True)
+            for file in pdf_files:
+                file_path = pdf_dir / file.name
+                try:
+                    with open(file_path, "wb") as f:
+                        f.write(file.getbuffer())
+                        f.flush()
+                        os.fsync(f.fileno())
+                    if file_path.stat().st_size > 0:
+                        all_files.append(("pdf", file_path))
+                    else:
+                        st.error(f"❌ Failed to write {file.name}: file is empty")
+                except Exception as e:
+                    st.error(f"❌ Failed to save {file.name}: {str(e)}")
+
+        if image_files:
+            image_dir = temp_path / "images"
+            image_dir.mkdir(exist_ok=True)
+            for file in image_files:
+                file_path = image_dir / file.name
+                try:
+                    with open(file_path, "wb") as f:
+                        f.write(file.getbuffer())
+                        f.flush()
+                        os.fsync(f.fileno())
+                    if file_path.stat().st_size > 0:
+                        all_files.append(("image", file_path))
+                    else:
+                        st.error(f"❌ Failed to write {file.name}: file is empty")
+                except Exception as e:
+                    st.error(f"❌ Failed to save {file.name}: {str(e)}")
+
+        # Small delay to ensure all files are fully written and accessible
+        time.sleep(0.5)
+
+        # Process files using the extraction pipeline
+        dfs = []
+
+        # Import extraction functions
+        from src.extraction.extract_excel import extract_all_excels
+        from src.extraction.extract_pdf import extract_all_pdfs
+        from src.extraction.extract_image import extract_all_images
+
+        # Process each file type
+        for file_type, file_path in all_files:
+            try:
+                # Double-check file is accessible before processing
+                if not file_path.exists():
+                    st.error(f"❌ File no longer exists: {file_path.name}")
+                    continue
+
+                if not os.access(file_path, os.R_OK):
+                    st.error(f"❌ Cannot read file: {file_path.name}")
+                    continue
+
+                status_text.text(f"Processing {file_type}: {file_path.name}")
+
+                if file_type == "excel":
+                    df = extract_all_excels(file_path.parent)
+                elif file_type == "pdf":
+                    df = extract_all_pdfs(file_path.parent)
+                elif file_type == "image":
+                    df = extract_all_images(file_path.parent)
+
+                if not df.empty:
+                    dfs.append(df)
+                    st.success(f"✅ {file_path.name}: {len(df)} data points extracted")
+                else:
+                    st.warning(f"⚠️ {file_path.name}: No data extracted")
+
+            except Exception as e:
+                st.error(f"❌ Error processing {file_path.name}: {str(e)}")
+
+            processed += 1
+            progress_bar.progress(processed / total_files)
+
+        # Combine all extracted data
+        if dfs:
+            new_data = pd.concat(dfs, ignore_index=True)
+
+            # Load existing data
+            existing_path = Path(PROCESSED_DATA_DIR) / "energy_consolidated.csv"
+            if existing_path.exists():
+                existing_data = pd.read_csv(existing_path, parse_dates=["timestamp"], low_memory=False)
+                combined_data = pd.concat([existing_data, new_data], ignore_index=True)
+            else:
+                combined_data = new_data
+
+            # Apply normalization and processing pipeline
+            status_text.text("Applying data processing pipeline...")
+
+            from src.normalization.normalize import normalize_to_kwh
+            from src.emissions.co2 import add_co2_emissions, cumulative_to_delta
+
+            combined_data = normalize_to_kwh(combined_data)
+            combined_data = cumulative_to_delta(combined_data, group_cols=("source", "measure"))
+
+            df_for_co2 = combined_data.copy()
+            df_for_co2["value_kwh"] = df_for_co2["delta_kwh"]
+            df_with_co2 = add_co2_emissions(df_for_co2)
+            combined_data["co2_kg"] = df_with_co2["co2_kg"]
+            combined_data["co2_source"] = df_with_co2["co2_source"]
+            combined_data["co2_factor"] = df_with_co2["co2_factor"]
+
+            # Anomaly detection
+            try:
+                from src.anomalies.detect import detect_anomalies
+                combined_data = detect_anomalies(combined_data)
+            except Exception as e:
+                st.warning(f"Anomaly detection skipped: {e}")
+
+            # Save updated dataset
+            existing_path.parent.mkdir(parents=True, exist_ok=True)
+            combined_data.to_csv(existing_path, index=False)
+
+            st.success(f"🎉 Successfully added {len(new_data):,} new data points!")
+            st.success(f"📊 Total dataset now contains {len(combined_data):,} data points")
+
+            # Clear cache and rerun
+            load_data.clear()
+            st.rerun()
+
+        else:
+            st.error("No data could be extracted from the uploaded files.")
+
+    except Exception as e:
+        st.error(f"Processing failed: {str(e)}")
+
+    finally:
+        # Clean up temp directory
+        try:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception as e:
+            st.warning(f"Warning: Could not clean up temporary files: {str(e)}")
+
+        progress_bar.empty()
+        status_text.empty()
+
+
+# ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
 st.markdown(
@@ -312,10 +500,10 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------------------
-# Tabs: Overview / Time series / Anomalies / By source / Raw data
+# Tabs: Overview / Time series / Anomalies / By source / Raw data / Data Sources
 # ---------------------------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "Overview", "Time series", "Anomalies", "By source", "Raw data"
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "Overview", "Time series", "Anomalies", "By source", "Raw data", "Data Sources"
 ])
 
 with tab1:
@@ -506,6 +694,104 @@ with tab5:
     st.download_button(
         "Download filtered data (CSV)", csv, "retech_fusion_filtered.csv", "text/csv"
     )
+
+with tab6:
+    st.markdown("<h2 class='section'>Add Data Sources</h2>", unsafe_allow_html=True)
+
+    st.markdown("""
+    Upload new data sources to expand your energy dataset. Supported formats:
+    - **Excel files** (.xlsx, .xls): Structured energy reports
+    - **PDF files** (.pdf): Scanned or digital utility bills
+    - **Images** (.jpg, .jpeg, .png): Photos of utility documents
+    """)
+
+    # File upload sections
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("### 📊 Excel Files")
+        excel_files = st.file_uploader(
+            "Upload Excel files",
+            type=["xlsx", "xls"],
+            accept_multiple_files=True,
+            key="excel_upload"
+        )
+        if excel_files:
+            st.success(f"📎 {len(excel_files)} Excel file(s) ready to process")
+
+    with col2:
+        st.markdown("### 📄 PDF Files")
+        pdf_files = st.file_uploader(
+            "Upload PDF files",
+            type=["pdf"],
+            accept_multiple_files=True,
+            key="pdf_upload"
+        )
+        if pdf_files:
+            st.success(f"📎 {len(pdf_files)} PDF file(s) ready to process")
+
+    with col3:
+        st.markdown("### 📷 Images")
+        image_files = st.file_uploader(
+            "Upload images",
+            type=["jpg", "jpeg", "png"],
+            accept_multiple_files=True,
+            key="image_upload"
+        )
+        if image_files:
+            st.success(f"📎 {len(image_files)} image file(s) ready to process")
+
+    # Process button
+    total_files = len(excel_files or []) + len(pdf_files or []) + len(image_files or [])
+    if total_files > 0:
+        if st.button("🚀 Process & Add to Dataset", type="primary", use_container_width=True):
+            process_uploaded_files(excel_files, pdf_files, image_files)
+
+    # Current data sources summary
+    st.markdown("---")
+    st.markdown("<h2 class='section'>Current Data Sources</h2>", unsafe_allow_html=True)
+
+    if not df.empty:
+        source_summary = (
+            df.groupby("source")
+            .agg(
+                data_points=("value", "size"),
+                file_type=("source", lambda x: Path(x.iloc[0]).suffix if x.iloc[0] else "unknown"),
+                first_date=("timestamp", "min"),
+                last_date=("timestamp", "max"),
+            )
+            .reset_index()
+            .sort_values("data_points", ascending=False)
+        )
+
+        # Add file type icons
+        def get_file_icon(ext):
+            icons = {
+                ".xlsx": "📊",
+                ".xls": "📊",
+                ".pdf": "📄",
+                ".jpg": "📷",
+                ".jpeg": "📷",
+                ".png": "📷",
+            }
+            return icons.get(ext.lower(), "📄")
+
+        source_summary["icon"] = source_summary["file_type"].apply(get_file_icon)
+        source_summary["display_name"] = source_summary["icon"] + " " + source_summary["source"]
+
+        st.dataframe(
+            source_summary[["display_name", "data_points", "first_date", "last_date"]],
+            column_config={
+                "display_name": st.column_config.TextColumn("Source", width="large"),
+                "data_points": st.column_config.NumberColumn("Data Points", width="medium"),
+                "first_date": st.column_config.DatetimeColumn("From", width="medium"),
+                "last_date": st.column_config.DatetimeColumn("To", width="medium"),
+            },
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("No data sources loaded yet. Upload files above to get started!")
 
 # ---------------------------------------------------------------------------
 # Footer
