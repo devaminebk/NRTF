@@ -1,0 +1,37 @@
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+
+# Data — leave empty in the image; mounted as a volume at runtime
+data/processed/*
+!data/processed/.gitkeep
+
+# Docs / tests
+README.md
+tests/
+notebooks/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.example
+
+# Docker itself
+docker-compose.yml
+Dockerfile
+.dockerignore

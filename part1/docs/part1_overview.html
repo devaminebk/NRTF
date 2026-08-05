@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NRTF Part 1 — ESP32 IoT Sensor Device</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    color: #1a1a1a;
+    line-height: 1.55;
+    font-size: 10.5pt;
+    margin: 0;
+  }
+  header {
+    border-bottom: 3px solid #1f6feb;
+    padding-bottom: 14px;
+    margin-bottom: 22px;
+  }
+  header .eyebrow {
+    color: #1f6feb;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    font-size: 9pt;
+    font-weight: 600;
+  }
+  header h1 {
+    font-size: 24pt;
+    margin: 6px 0 4px 0;
+    color: #0d1117;
+  }
+  header .subtitle {
+    color: #57606a;
+    font-size: 11pt;
+  }
+  header .meta {
+    margin-top: 12px;
+    font-size: 9pt;
+    color: #57606a;
+  }
+  header .meta a { color: #1f6feb; text-decoration: none; }
+  h2 {
+    font-size: 14pt;
+    color: #0d1117;
+    border-bottom: 1px solid #d0d7de;
+    padding-bottom: 4px;
+    margin-top: 22px;
+    margin-bottom: 10px;
+  }
+  h3 {
+    font-size: 11pt;
+    color: #0d1117;
+    margin-top: 14px;
+    margin-bottom: 6px;
+  }
+  p { margin: 6px 0; }
+  ul, ol { margin: 6px 0 6px 18px; padding: 0; }
+  li { margin: 3px 0; }
+  code, pre {
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 9pt;
+  }
+  code {
+    background: #f6f8fa;
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: #cf222e;
+  }
+  pre {
+    background: #f6f8fa;
+    border: 1px solid #d0d7de;
+    border-radius: 5px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    line-height: 1.4;
+    color: #1a1a1a;
+  }
+  pre code { background: none; padding: 0; color: inherit; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 8px 0;
+    font-size: 9.5pt;
+  }
+  th, td {
+    border: 1px solid #d0d7de;
+    padding: 5px 8px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #f6f8fa;
+    font-weight: 600;
+  }
+  .callout {
+    background: #ddf4ff;
+    border-left: 4px solid #1f6feb;
+    padding: 8px 12px;
+    margin: 10px 0;
+    border-radius: 0 4px 4px 0;
+    font-size: 9.5pt;
+  }
+  .callout strong { color: #0969da; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    background: #dafbe1;
+    color: #1a7f37;
+    border-radius: 10px;
+    font-size: 8.5pt;
+    font-weight: 600;
+  }
+  footer {
+    margin-top: 30px;
+    padding-top: 10px;
+    border-top: 1px solid #d0d7de;
+    font-size: 8.5pt;
+    color: #57606a;
+    text-align: center;
+  }
+  .arch-flow {
+    background: #f6f8fa;
+    border: 1px solid #d0d7de;
+    border-radius: 5px;
+    padding: 10px;
+    font-family: Consolas, monospace;
+    font-size: 9pt;
+    white-space: pre;
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">Re·Tech Fusion Hackathon &middot; INSAT, University of Carthage</div>
+  <h1>NRTF Part 1 — ESP32 IoT Sensor Device</h1>
+  <div class="subtitle">A modular, MQTT-based telemetry firmware for the ESP32 WROOM-32D with offline buffering, connection-loss recovery, and data quality tracking.</div>
+  <div class="meta">
+    Repository:
+    <a href="https://github.com/devaminebk/NRTF">https://github.com/devaminebk/NRTF</a>
+    &nbsp;&middot;&nbsp; Path: <code>part1/</code>
+    &nbsp;&middot;&nbsp; Board: <code>esp32doit-devkit-v1</code>
+    &nbsp;&middot;&nbsp; Framework: PlatformIO + Arduino
+  </div>
+</header>
+
+<h2>1. What this firmware does</h2>
+<p>
+  Part&nbsp;1 of the NRTF project turns an ESP32 WROOM-32D into a self-contained
+  IoT data node that reads sensors, validates the readings, and publishes them
+  over MQTT to a local Mosquitto broker as structured JSON. The architecture is
+  designed for the hackathon scoring rubric — every category (multi-sensor
+  coordination, protocol design, uptime, data quality, innovation) is addressed
+  by an explicit subsystem rather than ad-hoc code.
+</p>
+
+<div class="grid-2">
+  <div>
+    <h3>Sensors integrated</h3>
+    <ul>
+      <li><strong>DHT22</strong> — temperature (°C) and humidity (%)</li>
+      <li><strong>Flame sensor</strong> — digital trigger + analog intensity (raw 0–4095)</li>
+    </ul>
+  </div>
+  <div>
+    <h3>Headline features</h3>
+    <ul>
+      <li>Plugin-style sensor architecture</li>
+      <li>WiFi + MQTT auto-reconnect</li>
+      <li>Offline ring buffer with FIFO replay</li>
+      <li>Cumulative data-quality percentage</li>
+      <li>Per-measurement units in the JSON payload</li>
+    </ul>
+  </div>
+</div>
+
+<h2>2. Hardware wiring</h2>
+<table>
+  <thead>
+    <tr><th>Component</th><th>ESP32 Pin</th><th>Notes</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>DHT22 Data</td><td>GPIO 4</td><td>10 kΩ pull-up to 3.3 V required</td></tr>
+    <tr><td>Flame Digital</td><td>GPIO 5</td><td>1 = flame detected, 0 = no flame</td></tr>
+    <tr><td>Flame Analog</td><td>GPIO 34</td><td>ADC1 input-only pin (0–4095)</td></tr>
+    <tr><td>Common GND</td><td>GND</td><td>Shared between all sensors</td></tr>
+    <tr><td>Power</td><td>3.3 V / 5 V</td><td>Per sensor datasheet</td></tr>
+  </tbody>
+</table>
+
+<h2>3. Software architecture</h2>
+<p>
+  The firmware uses a plugin-style sensor architecture so additional sensors
+  can be added without modifying any existing file. Three layers cooperate:
+</p>
+
+<div class="arch-flow">
+  ┌──────────────────────┐    ┌────────────────────┐    ┌─────────────────┐
+  │  Concrete Sensors    │    │  SensorManager     │    │  main.cpp       │
+  │  (DHT22, Flame, …)   │──▶ │  - readAll()       │──▶ │  - WiFi / MQTT  │
+  │  inherit SensorBase  │    │  - data_quality    │    │  - publish loop │
+  └──────────────────────┘    └────────────────────┘    └─────────────────┘
+                                                              │
+                                            on publish failure ▼
+                                                       ┌──────────────┐
+                                                       │ MessageBuffer│
+                                                       │ (ring, FIFO) │
+                                                       └──────────────┘
+</div>
+
+<h3>Adding a new sensor</h3>
+<ol>
+  <li>Create <code>include/sensors/your_sensor.h</code> inheriting <code>SensorBase</code>.</li>
+  <li>Create <code>src/sensors/your_sensor.cpp</code> implementing <code>init()</code>, <code>read(JsonObject&amp;)</code>, <code>getName()</code>.</li>
+  <li>Register in <code>setup()</code>: <code>sensorManager.addSensor(new YourSensor(pin));</code></li>
+</ol>
+<p>The sensor's data automatically appears in every published payload and contributes to the cumulative data-quality counter.</p>
+
+<h2>4. MQTT data format</h2>
+<p>Published every 5 seconds to topic <code>esp32/sensors</code>:</p>
+<pre><code>{
+  "timestamp": 12345678,
+  "sensors": {
+    "DHT22": {
+      "temperature": { "value": 25.5, "unit": "C" },
+      "humidity":    { "value": 60.2, "unit": "%" }
+    },
+    "FlameSensor": {
+      "flame_digital": { "value": 0,    "unit": "bool" },
+      "flame_analog":  { "value": 1024, "unit": "raw"  }
+    }
+  },
+  "data_quality": {
+    "valid_reads": 47,
+    "total_reads": 48,
+    "valid_pct":   97.9
+  }
+}</code></pre>
+<div class="callout">
+  <strong>Why nested value/unit objects?</strong> A downstream consumer can
+  render a unit-aware UI without hard-coding sensor knowledge, and adding
+  units after the fact would have been a breaking change for any subscriber.
+</div>
+
+<h2>5. Connection-loss recovery</h2>
+<p>
+  A single MQTT broker is a single point of failure. The firmware therefore
+  treats network and broker availability as ephemeral and degrades gracefully
+  when either disappears. Detection is layered for speed:
+</p>
+<table>
+  <thead>
+    <tr><th>Layer</th><th>Catches</th><th>Time to detect</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>WiFi event handler (<code>WiFi.onEvent</code>)</td><td>AP loss, hotspot turned off</td><td>~6 s (driver beacon timeout)</td></tr>
+    <tr><td>TCP socket (<code>WiFiClient.connected</code>)</td><td>Broker process killed (FIN/RST)</td><td>1–3 s</td></tr>
+    <tr><td>MQTT keepalive (PINGREQ timeout)</td><td>Half-open socket, NAT timeout</td><td>~8 s (<code>2 × MQTT_KEEPALIVE</code>)</td></tr>
+  </tbody>
+</table>
+
+<h3>Offline buffering &amp; FIFO replay</h3>
+<p>
+  When any of those checks indicate the link is down, the publish path skips
+  <code>mqttClient.publish()</code> entirely (which would otherwise return a
+  false success by writing to a dead lwIP send buffer) and pushes the
+  serialized payload — together with the original capture timestamp — into a
+  fixed-size circular buffer in RAM (<code>BUFFER_MAX_SIZE = 20</code> entries
+  by default).
+</p>
+<p>
+  When the buffer fills, the oldest entry is discarded so the most recent
+  data is always preserved. The instant a new MQTT connection is
+  established, <code>flushBuffer()</code> is invoked from the reconnection
+  path and drains the queue in FIFO order, logging each replayed message
+  under the <code>[Backup]</code> tag so they can be visually distinguished
+  from live publishes in the serial monitor.
+</p>
+
+<h2>6. Data quality tracking</h2>
+<p>
+  Each individual sensor read is counted as either valid (returned <code>true</code>)
+  or invalid (NaN, out-of-range, or a sentinel like &minus;999). The
+  <code>SensorManager</code> maintains cumulative counters and emits them in
+  every payload so downstream services can monitor sensor health over time.
+</p>
+<table>
+  <thead><tr><th>Validation rule</th><th>Where defined</th></tr></thead>
+  <tbody>
+    <tr><td>Temperature ∈ [&minus;40, 80] °C</td><td><code>config.h &middot; TEMP_MIN/MAX</code></td></tr>
+    <tr><td>Humidity ∈ [0, 100] %</td><td><code>config.h &middot; HUMIDITY_MIN/MAX</code></td></tr>
+    <tr><td>Flame analog ∈ [0, 4095]</td><td><code>config.h &middot; FLAME_ANALOG_MIN/MAX</code></td></tr>
+    <tr><td>NaN rejection on every float read</td><td>each sensor's <code>read()</code></td></tr>
+  </tbody>
+</table>
+
+<h2>7. Configuration (<code>include/config.h</code>)</h2>
+<pre><code>// WiFi / MQTT
+#define WIFI_SSID        "Galaxy S20 Fe"
+#define WIFI_PASSWORD    "••••••••"
+#define MQTT_SERVER      "192.168.20.15"
+#define MQTT_PORT        1883
+#define MQTT_TOPIC_SENSORS "esp32/sensors"
+
+// Pins
+#define DHT22_PIN          4
+#define FLAME_DIGITAL_PIN  5
+#define FLAME_ANALOG_PIN  34
+
+// Cadence + liveness
+#define SENSOR_READ_INTERVAL    5000   // ms
+#define MQTT_RECONNECT_INTERVAL 5000   // ms
+#define MQTT_KEEPALIVE             4   // s — aggressive PINGREQ
+#define MQTT_SOCKET_TIMEOUT        2   // s — give up fast on dead socket
+
+// Offline buffer
+#define BUFFER_MAX_SIZE   20
+#define PAYLOAD_MAX_LEN  512</code></pre>
+
+<h2>8. Build, upload, monitor</h2>
+<p>From inside <code>part1/</code>:</p>
+<pre><code>pio run                    # compile
+pio run --target upload    # flash to ESP32 (COM5 by default)
+pio device monitor         # serial @ 115200</code></pre>
+<div class="callout">
+  <strong>Workspace tip:</strong> open <code>NRTF.code-workspace</code> at the
+  repo root rather than the <code>NRTF/</code> folder directly, otherwise
+  PlatformIO will not detect <code>part1/</code> as a project and IntelliSense
+  will fail to resolve includes.
+</div>
+
+<h2>9. Scoring rubric alignment</h2>
+<table>
+  <thead><tr><th>Criterion</th><th>Implementation</th></tr></thead>
+  <tbody>
+    <tr><td>Solution delivered &amp; functional (30 pts)</td><td>Validated JSON published every 5 s to MQTT</td></tr>
+    <tr><td>Multi-sensor coordination (25 pts)</td><td>DHT22 + Flame read in a single cycle via <code>SensorManager</code></td></tr>
+    <tr><td>Protocol design &amp; security (15 pts)</td><td>MQTT with keepalive + auto-reconnect (TLS-ready)</td></tr>
+    <tr><td>Uptime &amp; continuity (15 pts)</td><td>Event-driven WiFi reconnection, offline ring buffer with FIFO replay</td></tr>
+    <tr><td>Data quality (10 pts)</td><td>Range &amp; NaN validation, cumulative <code>valid_pct</code> in every payload</td></tr>
+    <tr><td>Innovation bonus (15 pts)</td><td>Plugin sensor architecture, layered connection detection, units in payload</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  Re·Tech Fusion Hackathon &middot; INSAT, University of Carthage &middot;
+  Source: <a href="https://github.com/devaminebk/NRTF">github.com/devaminebk/NRTF</a>
+</footer>
+
+</body>
+</html>

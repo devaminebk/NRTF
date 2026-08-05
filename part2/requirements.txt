@@ -1,0 +1,37 @@
+# ===== Data handling =====
+pandas==2.2.2
+numpy==1.26.4
+openpyxl==3.1.5          # Read/write .xlsx files
+xlrd==2.0.1              # Read older .xls files
+
+# ===== PDF extraction =====
+pdfplumber==0.11.4       # Extract text and tables from PDFs
+pypdf==5.0.1             # PDF utilities (merge, split, metadata)
+pdf2image==1.17.0        # Convert PDF pages to images (for scanned PDFs)
+
+# ===== Image / OCR =====
+Pillow==10.4.0           # Image processing
+google-generativeai==0.8.3  # Gemini Vision API for multimodal OCR
+pytesseract==0.3.13      # OCR engine wrapper (requires Tesseract installed)
+opencv-python-headless==4.10.0.84  # Image preprocessing for OCR
+
+# ===== Anomaly detection =====
+scikit-learn==1.5.2      # IsolationForest, statistical models
+scipy==1.14.1            # Z-score, statistical tests
+
+# ===== Dashboard =====
+streamlit==1.39.0        # Web dashboard
+plotly==5.24.1           # Interactive charts
+altair==5.4.1            # Alternative charting (used by Streamlit natively)
+
+# ===== IoT / real-time data =====
+paho-mqtt==2.1.0         # MQTT client for IoT sensors
+requests==2.32.3         # HTTP API calls
+
+# ===== Utilities =====
+python-dotenv==1.0.1     # Load .env config files
+loguru==0.7.2            # Easy logging
+pydantic==2.9.2          # Data validation
+
+# ===== Testing =====
+pytest==8.3.3
